@@ -1,0 +1,10 @@
+Copyright (c) 2012, Gregory Taylor
+Original work licensed under the BSD 3-Clause License. See LICENSE for full text.
+
+Modifications:
+- Modified by kaochiuan (c) 2025
+- Files modified:
+  - dynamodb_sessions/backends/dynamodb.py — updated session serialization and TTL handling
+  - dynamodb_sessions/backends/cached_dynamodb.py — added local cache layer
+
+The original BSD-3-Clause license in LICENSE remains in effect for the original code and must be distributed with any source or binary redistributions. Modifications by kaochiuan are provided under the same BSD-3-Clause terms unless otherwise noted.

@@ -5,8 +5,8 @@ from django.conf import settings
 from django.contrib.sessions.backends.base import SessionBase, CreateError
 from django.core.exceptions import SuspiciousOperation
 
-from boto.dynamodb import connect_to_region
-from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
+import boto3
+from botocore.exceptions import ClientError
 
 
 TABLE_NAME = getattr(
@@ -20,12 +20,12 @@ AWS_ACCESS_KEY_ID = getattr(
     settings, 'DYNAMODB_SESSIONS_AWS_ACCESS_KEY_ID', False)
 if not AWS_ACCESS_KEY_ID:
     AWS_ACCESS_KEY_ID = getattr(
-        settings, 'AWS_ACCESS_KEY_ID')
+        settings, 'AWS_ACCESS_KEY_ID', None)
 
 AWS_SECRET_ACCESS_KEY = getattr(
     settings, 'DYNAMODB_SESSIONS_AWS_SECRET_ACCESS_KEY', False)
 if not AWS_SECRET_ACCESS_KEY:
-    AWS_SECRET_ACCESS_KEY = getattr(settings, 'AWS_SECRET_ACCESS_KEY')
+    AWS_SECRET_ACCESS_KEY = getattr(settings, 'AWS_SECRET_ACCESS_KEY', None)
 
 AWS_REGION_NAME = getattr(settings, 'DYNAMODB_SESSIONS_AWS_REGION_NAME', False)
 if not AWS_REGION_NAME:
@@ -42,15 +42,16 @@ def dynamodb_connection_factory():
     Since SessionStore is called for every single page view, we'd be
     establishing new connections so frequently that performance would be
     hugely impacted. We'll lazy-load this here on a per-worker basis. Since
-    boto.dynamodb.layer2.Layer2 objects are state-less (aside from security
-    tokens), we're not too concerned about thread safety issues.
+    boto3 resource objects are state-less (aside from security tokens), 
+    we're not too concerned about thread safety issues.
     """
 
     global _DYNAMODB_CONN
     if not _DYNAMODB_CONN:
         logger.debug("Creating a DynamoDB connection.")
-        _DYNAMODB_CONN = connect_to_region(
-            AWS_REGION_NAME,
+        _DYNAMODB_CONN = boto3.resource(
+            'dynamodb',
+            region_name=AWS_REGION_NAME,
             aws_access_key_id=AWS_ACCESS_KEY_ID,
             aws_secret_access_key=AWS_SECRET_ACCESS_KEY
         )
@@ -64,7 +65,7 @@ class SessionStore(SessionBase):
 
     def __init__(self, session_key=None):
         super(SessionStore, self).__init__(session_key)
-        self.table = dynamodb_connection_factory().get_table(TABLE_NAME)
+        self.table = dynamodb_connection_factory().Table(TABLE_NAME)
 
     def load(self):
         """
@@ -76,13 +77,19 @@ class SessionStore(SessionBase):
         """
 
         try:
-            item = self.table.get_item(
-                self.session_key, consistent_read=ALWAYS_CONSISTENT)
-        except (DynamoDBKeyNotFoundError, SuspiciousOperation):
+            response = self.table.get_item(
+                Key={HASH_ATTRIB_NAME: self.session_key},
+                ConsistentRead=ALWAYS_CONSISTENT
+            )
+            item = response.get('Item')
+            if not item:
+                self.create()
+                return {}
+        except (ClientError, SuspiciousOperation):
             self.create()
             return {}
 
-        session_data = item['data']
+        session_data = item.get('data', '')
         return self.decode(session_data)
 
     def exists(self, session_key):
@@ -94,13 +101,13 @@ class SessionStore(SessionBase):
             ``False`` if not.
         """
 
-        key_already_exists = self.table.has_item(
-            session_key,
-            consistent_read=ALWAYS_CONSISTENT,
-        )
-        if key_already_exists:
-            return True
-        else:
+        try:
+            response = self.table.get_item(
+                Key={HASH_ATTRIB_NAME: session_key},
+                ConsistentRead=ALWAYS_CONSISTENT
+            )
+            return 'Item' in response
+        except ClientError:
             return False
 
     def create(self):
@@ -139,21 +146,33 @@ class SessionStore(SessionBase):
             self._session_key = None
 
         self._get_or_create_session_key()
-        item = self.table.new_item(self.session_key)
-        # Queue up a PUT operation for UpdateItem, which preserves the
-        # existing 'created' attribute.
-        item.put_attribute('data', self.encode(self._get_session(no_load=must_create)))
-
+        
+        session_data = self.encode(self._get_session(no_load=must_create))
+        
         if must_create:
-
-            item.put_attribute('created', int(time.time()))
-            # We expect the data value to be False because we are creating a
-            # new session
-            item.put(expected_value={'data': False})
+            # Create new session with condition that it doesn't exist
+            try:
+                self.table.put_item(
+                    Item={
+                        HASH_ATTRIB_NAME: self.session_key,
+                        'data': session_data,
+                        'created': int(time.time())
+                    },
+                    ConditionExpression='attribute_not_exists(#pk)',
+                    ExpressionAttributeNames={'#pk': HASH_ATTRIB_NAME}
+                )
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                    raise CreateError
+                raise
         else:
-            # Commits the PUT UpdateItem for the 'data' attrib, meanwhile
-            # leaving the 'created' attrib un-touched.
-            item.save()
+            # Update existing session
+            self.table.update_item(
+                Key={HASH_ATTRIB_NAME: self.session_key},
+                UpdateExpression='SET #data = :data',
+                ExpressionAttributeNames={'#data': 'data'},
+                ExpressionAttributeValues={':data': session_data}
+            )
 
     def delete(self, session_key=None):
         """
@@ -168,9 +187,6 @@ class SessionStore(SessionBase):
                 return
             session_key = self.session_key
 
-        key = self.table.layer2.build_key_from_values(
-            self.table.schema,
-            session_key,
-            range_key=None
+        self.table.delete_item(
+            Key={HASH_ATTRIB_NAME: session_key}
         )
-        self.table.layer2.layer1.delete_item(self.table.name, key)
