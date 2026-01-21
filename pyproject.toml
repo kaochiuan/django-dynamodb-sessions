@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=40.8.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "django-dynamodb-sessions"
+version = "1.0"
+description = "A Django session backend using Amazon's DynamoDB"
+readme = "README.rst"
+license = {text = "BSD License"}
+authors = [
+    {name = "Gregory Taylor", email = "gtaylor@gc-taylor.com"}
+]
+requires-python = ">=3.6"
+dependencies = [
+    "django",
+    "boto3>=1.40.0",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Environment :: Web Environment",
+]
+
+[project.urls]
+Homepage = "https://github.com/gtaylor/django-dynamodb-sessions"
+Issues = "https://github.com/gtaylor/django-dynamodb-sessions/issues"
+
+[tool.setuptools]
+packages = ["dynamodb_sessions", "dynamodb_sessions.backends"]
