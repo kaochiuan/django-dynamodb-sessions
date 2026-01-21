@@ -1,10 +1,16 @@
 from setuptools import setup, find_packages
-import dynamodb_sessions
+import re
 
 long_description = open('README.rst').read()
 
-major_ver, minor_ver = dynamodb_sessions.__version__
-version_str = '%d.%d' % (major_ver, minor_ver)
+# Read version from __init__.py without importing
+with open('dynamodb_sessions/__init__.py') as f:
+    version_match = re.search(r'__version__\s*=\s*\((\d+),\s*(\d+)\)', f.read())
+    if version_match:
+        major_ver, minor_ver = int(version_match.group(1)), int(version_match.group(2))
+        version_str = '%d.%d' % (major_ver, minor_ver)
+    else:
+        version_str = '1.0'
 
 setup(
     name='django-dynamodb-sessions',
